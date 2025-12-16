@@ -1,3 +1,3 @@
-# specs
+# bitcoinkernel-proposals
 
-Collection of specifications for discussion pre-implementation.
+Proposals for bitcoinkernel enhancements: specifications, frameworks and implementation designs.
