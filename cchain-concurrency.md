@@ -49,8 +49,8 @@ public:
 };
 ```
 **Issues:**
-- **Write blocking:** Writers mult hold esclusive lock, blocking all readers
-- **Inconsistent state:** Cannot capture consistent view without holding lock
+- **Write blocking:** Writers must hold exclusive lock, blocking all readers
+- **Inconsistent state:** Can not capture consistent view without holding lock
   throughout operation
 - **Read contention:** Multiple readers block each other unnecessarily
 
