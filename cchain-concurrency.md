@@ -26,7 +26,7 @@
 
 ## Summary
 
-Improve CChain multi-threaded performance by eliminating reader blocking and
+Improve CChain multi-threaded performance by minimizing lock hold times and
 ensuring consistent snapshots through an immutable copy-on-write design.
 
 ## Problem Statement
@@ -80,11 +80,10 @@ optimizing reorganization performance.
 ## Proposed Solution
 
 Replace the single vector with a two-vector structure (`base` + `tail`)
-accessed via atomic `std::shared_ptr` operations. Sequential block additions
-use a fast-path `tail` append, replacing the old tail pointer atomically. When
-the tail fills (i.e. reaches a predetermined size), `base` and `tail` are
-merged into a new immutable `base`. This copy-on-write approach enables
-lock-free reads through immutable snapshots (`CChain::Snapshots`) that capture
+protected by a mutex. Sequential block additions use a fast-path `tail` append,
+replacing the old tail pointer. When the tail fills (i.e. reaches a predetermined
+size), `base` and `tail` are merged into a new immutable `base`. This copy-on-write approac
+enables enables consistent reads through snapshots (`CChain::Snapshots`) that capture
 constistent point-in-time views.
 ```cpp
 class CChain
@@ -96,8 +95,8 @@ private:
     // Immutable tail: recent blocks (max 1000)
     std::shared_ptr<const std::vector<CBlockIndex*>> m_tail;
 
-    // Mutex only for updates, not reads
-    mutable std::mutex m_update_mutex;
+    // Mutex protects both reads and writes
+    mutable std::mutex m_mutex;
 
     static constexpr size_t MAX_TAIL_SIZE = 1000;
 
@@ -105,14 +104,14 @@ public:
     /**
      * Get a consistent snapshot of the chain.
      *
-     * This is lock-free and fast. The returned snapshot provides a consistent
-     * view that will not change even if the chain is updated by other threads.
+     * This acquires a mutex to ensure both base and tail are read atomically.
+     * The returned snapshot provides a consistent view that will not change
+     * even if the chain is updated by other threads.
      */
     Snapshot GetSnapshot() const
     {
-        return Snapshot(
-            std::atomic_load(&m_base),
-            std::atomic_load(&m_tail));
+        std::lock_guard lock(m_mutex);
+        return Snapshot(m_base, m_tail);
     }
 };
 ```
@@ -315,7 +314,8 @@ are automatically freed.
 ```cpp
 // Thread 1
 void* reader_thread_1(void* arg) {
-    auto snap = chain.GetSnapshot();  // Lock-free
+    auto snap = chain.GetSnapshot();  // Acquires mutex briefly
+    // Mutex released - can now read without contention
     for (int i = 0; i < snap.Height(); i++) {
         process(snap[i]);
     }
@@ -324,22 +324,24 @@ void* reader_thread_1(void* arg) {
 
 // Thread 2
 void* reader_thread_2(void* arg) {
-    auto snap = chain.GetSnapshot();  // Lock-free, concurrent with Thread 1
+    auto snap = chain.GetSnapshot();  // May briefly wait for Thread 1's GetSnapshot
+    // Once snapshot acquired, no contention with Thread 1
     CBlockIndex* tip = snap.Tip();
     analyze(tip);
     return NULL;
 }
 
-// No contention, no waiting
+// Brief mutex contention during GetSnapshot, then parallel execution
 ```
 
 **Pattern 2: Reader While Writer Updates**
 ```cpp
 // Thread 1: Long-running read
 void* reader_thread(void* arg) {
-    auto snap = chain.GetSnapshot();
+    auto snap = chain.GetSnapshot(); // Acquired mutex briefly
 
     // Long operation - chain may be updated during this time
+    // No lock held during this phase
     for (int i = 0; i < snap.Height(); i++) {
         expensive_operation(snap[i]);
     }
@@ -350,8 +352,8 @@ void* reader_thread(void* arg) {
 
 // Thread 2: Writer
 void* validation_thread(void* arg) {
-    // Writer updates chain
-    chain.SetTip(new_block);  // Locks m_update_mutex
+    // Writer updates chain (acquires m_mutex)
+    chain.SetTip(new_block);  // Holds mutex during update
 
     // Thread 1's snapshot unaffected - still sees old state
     // New readers will see new state
@@ -359,11 +361,20 @@ void* validation_thread(void* arg) {
 }
 ```
 
+**Key Improvement over current implementation:**
+While the mutex is held briefly during `GetSnapshot()` and `SetTip()`,
+readers can proceed with length operations on their snapshots without holding
+any locks. This eliminates the current bottleneck where `cs_main` must be
+held for the entire duration of chain access.
+
 ## Open Questions
 
 1. What is the ideal `MAX_TAIL_SIZE`? Shorter chain favors shorter tail,
        longer chain favors longer tail.
 2. Could the tail also be a different data structure to optimize write
-       speed?
+       speed? Current benchmarking results suggest this will be required
 3. **How many locks can safely be removed?** [Bitcoin Core Locking/mutex usage notes](https://github.com/bitcoin/bitcoin/blob/master/doc/developer-notes.md#lockingmutex-usage-notes)
+4. **Could we use a read-write lock (shared_mutex) instead?** This would
+       allow truly concurrent reads during `GetSnapshot()` while still
+       preventing the race condition between reading `m_base` and `m_tail`.
 
