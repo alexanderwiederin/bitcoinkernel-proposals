@@ -12,8 +12,8 @@
 | **Status** | Draft |
 | **Pillar** | Architecture & Performance |
 | **Related Work** | [Preliminary implementation](https://github.com/alexanderwiederin/bitcoin/tree/chain-base-tail) |
-| **Date Created** | 2024-12-16 |
-| **Last Updated** | 2024-12-23 |
+| **Date Created** | 2025-12-16 |
+| **Last Updated** | 2026-01-04 |
 
 </td>
 <td width="40%" style="vertical-align: top; border: none;">
