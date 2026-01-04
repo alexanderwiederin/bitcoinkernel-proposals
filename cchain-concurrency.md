@@ -12,8 +12,8 @@
 | **Status** | Draft |
 | **Pillar** | Architecture & Performance |
 | **Related Work** | [Preliminary implementation](https://github.com/alexanderwiederin/bitcoin/tree/chain-base-tail) |
-| **Date Created** | 2024-12-16 |
-| **Last Updated** | 2024-12-23 |
+| **Date Created** | 2025-12-16 |
+| **Last Updated** | 2026-01-04 |
 
 </td>
 <td width="40%" style="vertical-align: top; border: none;">
@@ -366,6 +366,13 @@ While the mutex is held briefly during `GetSnapshot()` and `SetTip()`,
 readers can proceed with length operations on their snapshots without holding
 any locks. This eliminates the current bottleneck where `cs_main` must be
 held for the entire duration of chain access.
+
+**Future Optimization: `stlab::copy_on_write` (~500 LOC implementation)**
+`stlab::copy_on_write` provides conditional in-place modification when
+reference count equals 1, avoiding vector copies during `SetTip()` when no
+snapshots are held by other threads. This optimization potentially benefits IBD
+performance but requires profiling to confirm. Can be added later without
+architectural change; out of scope for this project.
 
 ## Open Questions
 
